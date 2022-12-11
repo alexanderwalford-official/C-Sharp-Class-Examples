@@ -6,22 +6,33 @@ using System;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using System.Threading.Tasks;
+using System.Net.Http;
+using System.Text;
+using System.Security.Cryptography;
 
 public class SaveManager : MonoBehaviour
 {
-    public string SavesLocation = @"C:\\ProgramData\RenovateSoftware\SD\saves\";
+    string SavesLocation = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments) + "/Renovate Software LTD/Shrieking Darkness/saves/";
     public Sprite ButtonSprite;
     public GameObject InventoryManagerObj;
     public GameObject CheckpointManagerObj;
     public GameObject BackButton;
     public GameObject NextButton;
+    public GameObject SaveButton;
+    public GameObject Player;
     public string GameVersion = "0.1";
     public Text ResponseText;
+    public string apiKey = "550039706949";
+    string authfile = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments) + "/Renovate Software LTD/Shrieking Darkness/auth.dat";
     int startingpos = 100;
     int SeletedSavePage = 0;
     bool loaded = false;
     bool NotLoading = true;
     bool HasChangedVal = false;
+    public bool FoundPlayer = false;
+    public bool IsTitleScreen = false;
+
+    private static readonly HttpClient client = new HttpClient(); // the HTTP client object
 
     private void OnLevelWasLoaded(int level)
     {
@@ -42,14 +53,18 @@ public class SaveManager : MonoBehaviour
         }
     }
 
-
     public void Start()
     {
+        if (IsTitleScreen)
+        {
+            SaveButton.SetActive(false);
+        }
+
         int counter = 0;
 
         // reset the menu
         GameObject[] targets = GameObject.FindGameObjectsWithTag("UI-ELEMENT");
-        foreach(GameObject g in targets)
+        foreach (GameObject g in targets)
         {
             GameObject.Destroy(g);
         }
@@ -69,7 +84,7 @@ public class SaveManager : MonoBehaviour
             {
                 saves.Add(file.Name.ToString());
             }
-            
+
             foreach (string s in saves)
             {
                 // create a background for each save
@@ -132,7 +147,7 @@ public class SaveManager : MonoBehaviour
                 newobjbtn2.GetComponent<Image>().sprite = ButtonSprite;
                 newobjbtn2.name = "BTN-DELETE-" + s;
                 newobjbtn2.transform.SetParent(this.transform);
-                newobjbtn2.GetComponent<Image>().color = new Color(255,0,0);
+                newobjbtn2.GetComponent<Image>().color = new Color(255, 0, 0);
                 newobjbtn2.GetComponent<Image>().rectTransform.sizeDelta = new Vector2(100, 100);
                 newobjbtn2.GetComponent<Image>().rectTransform.localPosition = new Vector3(100, -counter * 80 - 10 + startingpos, 0);
 
@@ -168,7 +183,7 @@ public class SaveManager : MonoBehaviour
         }
     }
 
-    public void NoSaves ()
+    public void NoSaves()
     {
         // display text
         GameObject newobj = new GameObject();
@@ -202,7 +217,7 @@ public class SaveManager : MonoBehaviour
         // select the needed components from the relevant game objects
         var CheckPointManager = CheckpointManagerObj.GetComponent<CheckPointManager>();
         var InventoryManager = InventoryManagerObj.GetComponent<PlayerInventory>();
-        
+
         // save the data as local variables
         int checkpointcount = CheckPointManager.CheckPointCounter;
         string levelname = CheckPointManager.Levelname;
@@ -228,163 +243,208 @@ public class SaveManager : MonoBehaviour
             RecompiledItemCounts = RecompiledItemCounts + i.ToString() + "|";
         }
 
+        string file_name = DateTime.Now.Day.ToString() + "-" + DateTime.Now.Month.ToString() + "-" + DateTime.Now.Year.ToString() + "--" + DateTime.Now.Hour.ToString() + DateTime.Now.Minute.ToString() + DateTime.Now.Second.ToString() + ".save";
+        string file_data = levelname + "\n/" + checkpointcount.ToString() + "\n/" + RecompiledItemNames + "\n/" + RecompiledItemDescriptions + "\n/" + RecompiledItemCounts + "\n/" + PlayerPosString + "\n/" + GameVersion;
+
         // save a new file, containing the gameobject data
-        File.WriteAllText(SavesLocation + DateTime.Now.Day.ToString() + "-" + DateTime.Now.Month.ToString() + "-" + DateTime.Now.Year.ToString() + "--" + DateTime.Now.Hour.ToString() + DateTime.Now.Minute.ToString() + DateTime.Now.Second.ToString() + ".save", levelname + "\n/" + checkpointcount.ToString() + "\n/" + RecompiledItemNames + "\n/" + RecompiledItemDescriptions + "\n/" + RecompiledItemCounts + "\n/" + PlayerPosString + "\n/" + GameVersion);
+        File.WriteAllText(SavesLocation + file_name, file_data);
 
         // re-render the saves
         Start();
 
         ResponseText.text = "Your game was saved.";
+
+        // check if the auth file exists
+        if (File.Exists(authfile))
+        {
+            // upload the file to the cloud
+            UploadSave(file_data, file_name);
+        }
     }
 
     public void LoadGame(string save)
     {
-        try
+        if (NotLoading)
         {
-            UnityEngine.Debug.Log("Loading.. " + SavesLocation + save);
-
-            // get the data and load it into a string
-            string SaveData = File.ReadAllText(SavesLocation + save);
-
-            // split the relevant parts of the string
-            string[] data = SaveData.Split("/");
-
-            // seperate the array into seperate strings
-            string level = data[0].Replace("\n", "");
-            string checkpointcount = data[1].Replace("\n", "");
-            string[] ItemNames = data[2].Replace("\n", "").Replace(" ", "").Split("|");
-            string[] ItemDescriptions = data[3].Replace("\n", "").Replace(" ", "").Split("|");
-            string[] ItemCounts = data[4].Replace("\n", "").Replace(" ", "").Split("|");
-            string[] PlayerPosString = data[5].Replace("\n", "").Split("|");
-            string LGameVersion = data[6].Replace("\n", "");
-
-            float PlayerPosX = float.Parse(PlayerPosString[0]);
-            float PlayerPosY = float.Parse(PlayerPosString[1]);
-            float PlayerPosZ = float.Parse(PlayerPosString[2]);
-
-            Vector3 LoadedPlayerPos = new Vector3(PlayerPosX, PlayerPosY, PlayerPosZ);
-
-            UnityEngine.Debug.Log("Level: " + level);
-            UnityEngine.Debug.Log("Checkpoint Count: " + checkpointcount);
-            UnityEngine.Debug.Log("Game Version: " + LGameVersion);
-
-            if (LGameVersion != GameVersion)
+            if (IsTitleScreen)
             {
-                // version mismatch!
-                ResponseText.text = "Game version mismatch! Will attempt to load anyway..";
+                Destroy(GameObject.Find("Music"));
             }
-            else
-            {
-                ResponseText.text = "Same game version..";
-            }
-
-            // now do the relevant work
-
-            // select the needed components from the relevant game objects
-            var CheckPointManager = CheckpointManagerObj.GetComponent<CheckPointManager>();
-            var InventoryManager = InventoryManagerObj.GetComponent<PlayerInventory>();
-
-            // load data into the checkpoint manager
-            CheckPointManager.Levelname = level;
 
             try
             {
-                // change the level if not as the same stored
-                if (level != SceneManager.GetActiveScene().name.ToString())
+                UnityEngine.Debug.Log("Loading.. " + SavesLocation + save);
+
+                // get the data and load it into a string
+                string SaveData = File.ReadAllText(SavesLocation + save);
+
+                // split the relevant parts of the string
+                string[] data = SaveData.Split("/");
+
+                // seperate the array into seperate strings
+                string level = data[0].Replace("\n", "");
+                string checkpointcount = data[1].Replace("\n", "");
+                string[] ItemNames = data[2].Replace("\n", "").Split("|");
+                string[] ItemDescriptions = data[3].Replace("\n", "").Split("|");
+                string[] ItemCounts = data[4].Replace("\n", "").Split("|");
+                string[] PlayerPosString = data[5].Replace("\n", "").Split("|");
+                string LGameVersion = data[6].Replace("\n", "");
+
+                float PlayerPosX = float.Parse(PlayerPosString[0]);
+                float PlayerPosY = float.Parse(PlayerPosString[1]);
+                float PlayerPosZ = float.Parse(PlayerPosString[2]);
+
+                Vector3 LoadedPlayerPos = new Vector3(PlayerPosX, PlayerPosY, PlayerPosZ);
+
+                UnityEngine.Debug.Log("Level: " + level);
+                UnityEngine.Debug.Log("Checkpoint Count: " + checkpointcount);
+                UnityEngine.Debug.Log("Game Version: " + LGameVersion);
+
+                if (LGameVersion != GameVersion)
                 {
-                    if (NotLoading)
-                    {
-                        NotLoading = false; // stop this block from repeating itself
-                        this.gameObject.name = "LoadDataParser";
-                        //this.gameObject.AddComponent<NoDestoryOnLoad>();
-                        // not the same, load it and pass the arguments
-                        GameObject SceneLoadData = new GameObject();
-                        SceneLoadData.AddComponent<NoDestoryOnLoad>(); // make it invincible
-                        SceneLoadData.name = save; // name it the relevant file name
-                        SceneLoadData.tag = "SCENE LOADER";
-                        ResponseText.text = "Loading..";
-                        StartCoroutine(LoadYourAsyncScene(level, LoadedPlayerPos, checkpointcount ,ItemNames, ItemDescriptions, ItemCounts));
-                    }
+                    // version mismatch!
+                    ResponseText.text = "Game version mismatch! Will attempt to load anyway..";
                 }
                 else
                 {
-                    try
-                    {
-                        CheckPointManager.CheckPointCounter = int.Parse(checkpointcount);
-                    }
-                    catch
-                    {
-                        ResponseText.text = "Could not parse string!";
-                    }
-
-                    try
-                    {
-                        // first, remove all items from the inventory
-                        foreach (string s in InventoryManager.items)
-                        {
-                            InventoryManager.items.Remove(s);
-                        }
-                        foreach (string s in InventoryManager.itemsDescription)
-                        {
-                            InventoryManager.itemsDescription.Remove(s);
-                        }
-                        foreach (int s in InventoryManager.itemsCount)
-                        {
-                            InventoryManager.itemsCount.Remove(s);
-                        }
-
-                        // load data into the inventory manager
-                        // decompile the data
-                        foreach (string s in ItemNames)
-                        {
-                            InventoryManager.items.Add(s);
-                        }
-                        foreach (string s in ItemDescriptions)
-                        {
-                            InventoryManager.itemsDescription.Add(s);
-                        }
-                        foreach (string s in ItemCounts)
-                        {
-                            if (s != "" && s != " " && s != "|")
-                            {
-                                InventoryManager.itemsCount.Add(int.Parse(s));
-                            }
-                        }
-                        GameObject player = GameObject.FindGameObjectWithTag("Player");
-                        player.transform.position = LoadedPlayerPos;
-                        ResponseText.text = "Your game was loaded.";
-                        StartCoroutine(HideResponseText());
-                    }
-                    catch
-                    {
-                        ResponseText.text = "Could not add items to inventory. Load failed.";
-                        StartCoroutine(HideResponseText());
-                    }
-
+                    ResponseText.text = "Same game version..";
                 }
-            }
-            catch
-            {
-                UnityEngine.Debug.LogError("Error SV2!");
-                ResponseText.text = "Programming error! Please contact developer.";
-            }
-            
-        }
-        catch(Exception e)
-        {
-            // error
-            UnityEngine.Debug.Log("Failed to load: " + e);
-            ResponseText.text = "Failed to load the save.";
 
-            StartCoroutine(HideResponseText());
+                // now do the relevant work
+
+                // select the needed components from the relevant game objects
+                var CheckPointManager = CheckpointManagerObj.GetComponent<CheckPointManager>();
+                var InventoryManager = InventoryManagerObj.GetComponent<PlayerInventory>();
+
+                // load data into the checkpoint manager
+                CheckPointManager.Levelname = level;
+
+                try
+                {
+                    // change the level if not as the same stored
+                    if (level != SceneManager.GetActiveScene().name.ToString())
+                    {
+                        if (NotLoading)
+                        {
+                            NotLoading = false; // stop this block from repeating itself
+                            this.gameObject.name = "LoadDataParser";
+                            //this.gameObject.AddComponent<NoDestoryOnLoad>();
+                            // not the same, load it and pass the arguments
+                            GameObject SceneLoadData = new GameObject();
+                            SceneLoadData.AddComponent<NoDestoryOnLoad>(); // make it invincible
+                            SceneLoadData.name = save; // name it the relevant file name
+                            SceneLoadData.tag = "SCENE LOADER";
+                            ResponseText.text = "Loading..";
+                            StartCoroutine(LoadYourAsyncScene(level, LoadedPlayerPos, checkpointcount, ItemNames, ItemDescriptions, ItemCounts));
+                        }
+                    }
+                    else
+                    {
+                        try
+                        {
+                            CheckPointManager.CheckPointCounter = int.Parse(checkpointcount);
+                        }
+                        catch
+                        {
+                            ResponseText.text = "Could not parse string!";
+                        }
+
+                        try
+                        {
+                            // first, remove all items from the inventory
+                            foreach (string s in InventoryManager.items)
+                            {
+                                if (s != "Torch")
+                                {
+                                    InventoryManager.items.Remove(s);
+                                }
+                            }
+                            foreach (string s in InventoryManager.itemsDescription)
+                            {
+                                InventoryManager.itemsDescription.Remove(s);
+                            }
+                            foreach (int s in InventoryManager.itemsCount)
+                            {
+                                InventoryManager.itemsCount.Remove(s);
+                            }
+
+                            // load data into the inventory manager
+                            // decompile the data
+                            foreach (string s in ItemNames)
+                            {
+                                try
+                                {
+                                    InventoryManager.items.Add(s);
+                                }
+                                catch
+                                {
+                                    InventoryManager.items.Add("Error");
+                                }
+                            }
+                            foreach (string s in ItemDescriptions)
+                            {
+                                try
+                                {
+                                    InventoryManager.itemsDescription.Add(s);
+                                }
+                                catch
+                                {
+                                    InventoryManager.itemsDescription.Add("Error");
+                                }
+                            }
+                            foreach (string s in ItemCounts)
+                            {
+                                try
+                                {
+                                    InventoryManager.itemsCount.Add(int.Parse(s));
+                                }
+                                catch
+                                {
+                                    InventoryManager.itemsCount.Add(1);
+                                }
+                            }
+                            ResponseText.text = "Your game was loaded.";
+                            StartCoroutine(HideResponseText());
+                        }
+                        catch
+                        {
+                            ResponseText.text = "Some of your items may be missing.";
+                            StartCoroutine(HideResponseText());
+                        }
+                        finally
+                        {
+                            Player.transform.position = LoadedPlayerPos;
+                        }
+                    }
+                }
+                catch
+                {
+                    UnityEngine.Debug.LogError("Error SV2!");
+                    ResponseText.text = "Programming error! Please contact developer.";
+                }
+
+            }
+            catch (Exception e)
+            {
+                // error
+                UnityEngine.Debug.Log("Failed to load: " + e);
+                ResponseText.text = "Failed to load the save.";
+
+                StartCoroutine(HideResponseText());
+            }
         }
-        
     }
-    
+
     public void DeleteSave(string save, GameObject newobjbtntext, GameObject newobjbtn, GameObject newobjbtn2)
     {
-        // delete the save
+        // delete the save locally
         File.Delete(SavesLocation + save);
+
+        if (File.Exists(authfile))
+        {
+            // delete the save from the cloud
+            DeleteCloudSave(save);
+        }
 
         // re-render the saves
         Start();
@@ -425,7 +485,7 @@ public class SaveManager : MonoBehaviour
         StartCoroutine(PassData(level, PlayerPos, checkpointcount, ItemNames, ItemDescriptions, ItemCounts));
     }
 
-    IEnumerator PassData (string level, Vector3 PlayerPos, string checkpointcount, string[] ItemNames, string[] ItemDescriptions, string[] ItemCounts)
+    IEnumerator PassData(string level, Vector3 PlayerPos, string checkpointcount, string[] ItemNames, string[] ItemDescriptions, string[] ItemCounts)
     {
         yield return new WaitForSecondsRealtime(1);
         if (!HasChangedVal)
@@ -471,10 +531,114 @@ public class SaveManager : MonoBehaviour
         }
     }
 
-    IEnumerator HideResponseText ()
+    public async void UploadSave(string file_contents, string file_name)
+    {
+        // get the key
+        string key = Decrypt(File.ReadAllText(authfile));
+
+        // first, check if folder exists in cloud
+        var values = new Dictionary<string, string> {
+            { "apikey", apiKey },
+            { "key", key },
+            { "name", "_SD-SAVES" }
+        };
+
+        var content = new FormUrlEncodedContent(values); // set the POST content from our variables
+        var response = await client.PostAsync("https://renovatesoftware.com/API/check_folder_exists/", content); // send the post asyncronously
+        var responseString = response.Content.ReadAsStringAsync().Result.ToString();// get the server's response
+
+        if (responseString == "Does not exist.")
+        {
+            ResponseText.text = "Cloud folder does not exist, creating..";
+            // folder does not exist, create it
+            // first, check if folder exists in cloud
+            var values2 = new Dictionary<string, string> {
+                { "apikey", apiKey },
+                { "key", key },
+                { "name", "_SD-SAVES" }
+            };
+
+            var content2 = new FormUrlEncodedContent(values2); // set the POST content from our variables
+            var response2 = await client.PostAsync("https://renovatesoftware.com/API/create_folder/", content2); // send the post asyncronously
+            var responseString2 = response2.Content.ReadAsStringAsync().Result.ToString();// get the server's response
+            ResponseText.text = "Cloud folder created.";
+        }
+
+        ResponseText.text = "Uploading save file to cloud..";
+        // upload the file
+        // first, check if folder exists in cloud
+        var values3 = new Dictionary<string, string> {
+            { "apikey", apiKey },
+            { "key", key },
+            { "file_name", file_name },
+            { "file_content", file_contents },
+            { "folder", "_SD-SAVES" },
+            { "notes", "Shrieking Darkness save file, automatically generated from the game." }
+        };
+
+        var content3 = new FormUrlEncodedContent(values3); // set the POST content from our variables
+        var response3 = await client.PostAsync("https://renovatesoftware.com/API/create_file/ ", content3); // send the post asyncronously
+        var responseString3 = response3.Content.ReadAsStringAsync().Result.ToString(); // get the server's response
+
+        if (responseString3 == "OK")
+        {
+            ResponseText.text = "File saved to cloud.";
+        }
+        else
+        {
+            ResponseText.text = "Could not save to cloud.";
+        }
+
+        StartCoroutine(HideResponseText());
+    }
+
+    public async void DeleteCloudSave(string file_name)
+    {
+        // get the key
+        string key = Decrypt(File.ReadAllText(authfile));
+
+        // first, check if folder exists in cloud
+        var values = new Dictionary<string, string> {
+            { "apikey", apiKey },
+            { "key", key },
+            { "file_name", file_name },
+            { "folder", "_SD-SAVES" }
+        };
+
+        var content = new FormUrlEncodedContent(values); // set the POST content from our variables
+        var response = await client.PostAsync("https://renovatesoftware.com/API/delete_string_file/", content); // send the post asyncronously
+        var responseString = response.Content.ReadAsStringAsync().Result.ToString();// get the server's response
+
+    }
+
+    static public string Decrypt(string data)
+    {
+        string passPhrase = "gddfasefdf";        // can be any string
+        string saltValue = "awdsfgga";        // can be any string
+        string hashAlgorithm = "SHA1";             // can be "MD5"
+        int passwordIterations = 7;                  // can be any number
+        string initVector = "~1B2c3D4e5F6g7H8"; // must be 16 bytes
+        int keySize = 256;
+
+        byte[] bytes = Encoding.ASCII.GetBytes(initVector);
+        byte[] rgbSalt = Encoding.ASCII.GetBytes(saltValue);
+        byte[] buffer = Convert.FromBase64String(data);
+        byte[] rgbKey = new PasswordDeriveBytes(passPhrase, rgbSalt, hashAlgorithm, passwordIterations).GetBytes(keySize / 8);
+        RijndaelManaged managed = new RijndaelManaged();
+        managed.Mode = CipherMode.CBC;
+        ICryptoTransform transform = managed.CreateDecryptor(rgbKey, bytes);
+        MemoryStream stream = new MemoryStream(buffer);
+        CryptoStream stream2 = new CryptoStream(stream, transform, CryptoStreamMode.Read);
+        byte[] buffer5 = new byte[buffer.Length];
+        int count = stream2.Read(buffer5, 0, buffer5.Length);
+        stream.Close();
+        stream2.Close();
+        return Encoding.UTF8.GetString(buffer5, 0, count);
+    }
+
+    IEnumerator HideResponseText()
     {
         yield return new WaitForSecondsRealtime(3);
         ResponseText.text = "";
     }
-
 }
